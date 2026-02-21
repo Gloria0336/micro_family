@@ -15,46 +15,40 @@ export default function App() {
   const [narrativeHistory, setNarrativeHistory] = useState<string[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [isInitialized, setIsInitialized] = useState(false);
   const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL);
-  const [apiKey, setApiKey] = useState(
-    () =>
-      localStorage.getItem("or_api_key") ||
-      (import.meta.env.VITE_OPENROUTER_API_KEY ?? "")
-  );
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const initSimulation = async () => {
-    setIsLoading(true);
-    try {
-      const response = await simulationService.startSimulation();
-      setNarrativeHistory([response.narrative]);
-      setState(response.state);
-      setIsInitialized(true);
-    } catch (error) {
-      console.error("Failed to init:", error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
+  // On mount: push stored API key to backend, then load persisted state
   useEffect(() => {
-    initSimulation();
+    const storedKey = localStorage.getItem("or_api_key") ?? "";
+    const init = async () => {
+      setIsLoading(true);
+      try {
+        // Restore config (key + model) to backend memory
+        if (storedKey) {
+          await simulationService.configure({ apiKey: storedKey, model: DEFAULT_MODEL });
+        }
+        // Load persisted state from SQLite
+        const { state: savedState, narrativeHistory: savedNarratives } =
+          await simulationService.loadState();
+        setState(savedState);
+        setNarrativeHistory(savedNarratives);
+      } catch (error) {
+        console.error("Failed to load state:", error);
+        // Fallback: fresh simulation
+        try {
+          const resp = await simulationService.startSimulation();
+          setState(resp.state);
+          setNarrativeHistory(resp.narrativeHistory);
+        } catch (e) {
+          console.error("Failed to start simulation:", e);
+        }
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    init();
   }, []);
-
-  const handleModelChange = (modelId: string) => {
-    setSelectedModel(modelId);
-    simulationService.setModel(modelId);
-    setState(INITIAL_STATE);
-    setNarrativeHistory([]);
-    setIsInitialized(false);
-    initSimulation();
-  };
-
-  const handleApiKeyChange = (key: string) => {
-    setApiKey(key);
-    simulationService.setApiKey(key);
-  };
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -65,12 +59,10 @@ export default function App() {
   const handleAction = async (customInput?: string) => {
     const action = customInput || input;
     if (!action.trim() || isLoading) return;
-
     setIsLoading(true);
-    setInput(""); // Clear input if it was used
-
+    setInput("");
     try {
-      const response = await simulationService.processAction(action, state);
+      const response = await simulationService.processAction(action);
       setNarrativeHistory((prev) => [...prev, response.narrative]);
       setState(response.state);
     } catch (error) {
@@ -80,12 +72,27 @@ export default function App() {
     }
   };
 
-  const quickActions = [
-    "推進 15 分鐘",
-    "推進 1 小時",
-    "爸爸回家了",
-    "發生了爭吵",
-  ];
+  const handleModelChange = async (modelId: string) => {
+    setSelectedModel(modelId);
+    await simulationService.configure({ model: modelId });
+    // Reset simulation with new model
+    setIsLoading(true);
+    try {
+      const resp = await simulationService.startSimulation();
+      setState(resp.state);
+      setNarrativeHistory(resp.narrativeHistory);
+    } catch (e) {
+      console.error("Reset failed:", e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleApiKeyChange = async (key: string) => {
+    await simulationService.configure({ apiKey: key, model: selectedModel });
+  };
+
+  const quickActions = ["推進 15 分鐘", "推進 1 小時", "爸爸回家了", "發生了爭吵"];
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col md:flex-row overflow-hidden">
@@ -106,7 +113,6 @@ export default function App() {
             <ModelSelector
               selectedModel={selectedModel}
               onSelect={handleModelChange}
-              apiKey={apiKey}
               onApiKeyChange={handleApiKeyChange}
             />
             <div className="flex items-center gap-3 text-sm font-medium text-slate-600 bg-slate-50 px-3 py-1.5 rounded-full border border-slate-200">
@@ -206,10 +212,7 @@ export default function App() {
         </div>
 
         <div className="space-y-6">
-          {/* Floor Plan */}
           <FloorPlan characters={state.characters} />
-
-          {/* Character Cards */}
           <div className="space-y-4">
             <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider">Characters</h3>
             <AnimatePresence>
@@ -231,9 +234,7 @@ export default function App() {
         <div className="mt-8">
           <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Environment</h2>
           <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-            <p className="text-slate-700 text-sm leading-relaxed">
-              {state.environment.notes}
-            </p>
+            <p className="text-slate-700 text-sm leading-relaxed">{state.environment.notes}</p>
           </div>
         </div>
       </div>
