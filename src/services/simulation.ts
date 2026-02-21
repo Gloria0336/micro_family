@@ -1,4 +1,3 @@
-import { GoogleGenAI } from "@google/genai";
 import { WorldState, SimulationResponse, INITIAL_STATE } from "../types";
 
 const SYSTEM_INSTRUCTION = `
@@ -30,70 +29,92 @@ JSON 格式範例：
 }
 `;
 
-export class SimulationService {
-  private ai: GoogleGenAI;
-  private model: any;
-  private chat: any;
+const INITIAL_NARRATIVE =
+  "早晨七點，陽光透過窗簾縫隙灑進屋內。媽媽已經在廚房忙碌，平底鍋裡滋滋作響，飄來煎蛋的香氣。爸爸還在主臥室呼呼大睡，昨晚似乎又熬夜趕專案了。大妹佔據了一樓的浴廁，正對著鏡子仔細整理瀏海。小妹穿著睡衣在客廳沙發上跳來跳去，等著看晨間卡通。哥哥的房間門緊閉，毫無動靜。";
 
-  constructor() {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      console.error("GEMINI_API_KEY is missing");
+type Message = { role: "system" | "user" | "assistant"; content: string };
+
+export class SimulationService {
+  private messages: Message[] = [];
+  private modelId: string;
+  private apiKey: string;
+
+  constructor(modelId = "google/gemini-2.5-flash") {
+    // Prefer user-stored key, fall back to env var
+    this.apiKey =
+      localStorage.getItem("or_api_key") ||
+      import.meta.env.VITE_OPENROUTER_API_KEY ||
+      "";
+    this.modelId = modelId;
+  }
+
+  setModel(modelId: string) {
+    this.modelId = modelId;
+  }
+
+  setApiKey(key: string) {
+    this.apiKey = key;
+  }
+
+  private async chat(userMessage: string): Promise<string> {
+    this.messages.push({ role: "user", content: userMessage });
+
+    const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": window.location.origin,
+        "X-Title": "MicroSim Family",
+      },
+      body: JSON.stringify({
+        model: this.modelId,
+        messages: [
+          { role: "system", content: SYSTEM_INSTRUCTION },
+          ...this.messages,
+        ],
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`OpenRouter error ${res.status}: ${err}`);
     }
-    this.ai = new GoogleGenAI({ apiKey: apiKey || "dummy" });
+
+    const data = await res.json();
+    const assistantText: string =
+      data.choices?.[0]?.message?.content ?? "(no response)";
+    this.messages.push({ role: "assistant", content: assistantText });
+    return assistantText;
   }
 
   async startSimulation(): Promise<SimulationResponse> {
-    this.chat = this.ai.chats.create({
-      model: "gemini-2.5-flash",
-      config: {
-        systemInstruction: SYSTEM_INSTRUCTION,
+    // Seed history with initial exchange so the model has context
+    this.messages = [
+      { role: "user", content: "初始化模擬，時間設定為 07:00" },
+      {
+        role: "assistant",
+        content: `=== 📝 敘事推演 ===\n${INITIAL_NARRATIVE}\n\n=== 💾 當前世界狀態庫 (JSON) ===\n${JSON.stringify(INITIAL_STATE)}`,
       },
-      history: [
-        {
-          role: "user",
-          parts: [{ text: "初始化模擬，時間設定為 07:00" }],
-        },
-        {
-          role: "model",
-          parts: [
-            {
-              text: `=== 📝 敘事推演 ===
-早晨七點，陽光透過窗簾縫隙灑進屋內。媽媽已經在廚房忙碌，平底鍋裡滋滋作響，飄來煎蛋的香氣。爸爸還在主臥室呼呼大睡，昨晚似乎又熬夜趕專案了。大妹佔據了一樓的浴廁，正對著鏡子仔細整理瀏海。小妹穿著睡衣在客廳沙發上跳來跳去，等著看晨間卡通。哥哥的房間門緊閉，毫無動靜。
+    ];
 
-=== 💾 當前世界狀態庫 (JSON) ===
-${JSON.stringify(INITIAL_STATE)}`,
-            },
-          ],
-        },
-      ],
-    });
-
-    // Return initial state directly
-    return {
-      narrative:
-        "早晨七點，陽光透過窗簾縫隙灑進屋內。媽媽已經在廚房忙碌，平底鍋裡滋滋作響，飄來煎蛋的香氣。爸爸還在主臥室呼呼大睡，昨晚似乎又熬夜趕專案了。大妹佔據了一樓的浴廁，正對著鏡子仔細整理瀏海。小妹穿著睡衣在客廳沙發上跳來跳去，等著看晨間卡通。哥哥的房間門緊閉，毫無動靜。",
-      state: INITIAL_STATE,
-    };
+    return { narrative: INITIAL_NARRATIVE, state: INITIAL_STATE };
   }
 
-  async processAction(input: string, currentState?: WorldState): Promise<SimulationResponse> {
-    if (!this.chat) {
+  async processAction(
+    input: string,
+    currentState?: WorldState
+  ): Promise<SimulationResponse> {
+    if (this.messages.length === 0) {
       await this.startSimulation();
     }
 
-    let message = input;
-    if (currentState) {
-      message = `
-【當前世界絕對狀態】：${JSON.stringify(currentState)}
-【使用者輸入/新事件】：${input}
-請根據上述「當前狀態」與「新事件」，推演下一步，並輸出新的 JSON。
-`;
-    }
+    const message = currentState
+      ? `【當前世界絕對狀態】：${JSON.stringify(currentState)}\n【使用者輸入/新事件】：${input}\n請根據上述「當前狀態」與「新事件」，推演下一步，並輸出新的 JSON。`
+      : input;
 
     try {
-      const result = await this.chat.sendMessage({ message });
-      const text = result.text;
+      const text = await this.chat(message);
       return this.parseResponse(text);
     } catch (error) {
       console.error("Simulation error:", error);
@@ -112,23 +133,21 @@ ${JSON.stringify(INITIAL_STATE)}`,
     let narrative = "解析錯誤：無法讀取敘事內容。";
     let state = INITIAL_STATE;
 
-    if (narrativeMatch && narrativeMatch[1]) {
+    if (narrativeMatch?.[1]) {
       narrative = narrativeMatch[1].trim();
     }
 
-    if (jsonMatch && jsonMatch[1]) {
+    if (jsonMatch?.[1]) {
       try {
-        // Clean up markdown code blocks if present
         let jsonStr = jsonMatch[1].trim();
         if (jsonStr.startsWith("```json")) {
           jsonStr = jsonStr.replace(/^```json/, "").replace(/```$/, "");
         } else if (jsonStr.startsWith("```")) {
           jsonStr = jsonStr.replace(/^```/, "").replace(/```$/, "");
         }
-        state = JSON.parse(jsonStr);
+        state = JSON.parse(jsonStr.trim());
       } catch (e) {
         console.error("Failed to parse JSON state:", e);
-        // Keep previous state if parse fails
       }
     }
 

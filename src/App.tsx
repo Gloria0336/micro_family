@@ -3,9 +3,12 @@ import { simulationService } from "./services/simulation";
 import { WorldState, INITIAL_STATE } from "./types";
 import { CharacterCard } from "./components/CharacterCard";
 import { FloorPlan } from "./components/FloorPlan";
-import { Clock, Send, Play, Plus, Loader2, Sun, Thermometer } from "lucide-react";
+import { ModelSelector } from "./components/ModelSelector";
+import { Clock, Send, Play, Loader2, Sun, Thermometer } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { motion, AnimatePresence } from "motion/react";
+
+const DEFAULT_MODEL = "google/gemini-2.5-flash";
 
 export default function App() {
   const [state, setState] = useState<WorldState>(INITIAL_STATE);
@@ -13,25 +16,45 @@ export default function App() {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
+  const [selectedModel, setSelectedModel] = useState(DEFAULT_MODEL);
+  const [apiKey, setApiKey] = useState(
+    () =>
+      localStorage.getItem("or_api_key") ||
+      (import.meta.env.VITE_OPENROUTER_API_KEY ?? "")
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  const initSimulation = async () => {
+    setIsLoading(true);
+    try {
+      const response = await simulationService.startSimulation();
+      setNarrativeHistory([response.narrative]);
+      setState(response.state);
+      setIsInitialized(true);
+    } catch (error) {
+      console.error("Failed to init:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   useEffect(() => {
-    // Initialize simulation
-    const init = async () => {
-      setIsLoading(true);
-      try {
-        const response = await simulationService.startSimulation();
-        setNarrativeHistory([response.narrative]);
-        setState(response.state);
-        setIsInitialized(true);
-      } catch (error) {
-        console.error("Failed to init:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    init();
+    initSimulation();
   }, []);
+
+  const handleModelChange = (modelId: string) => {
+    setSelectedModel(modelId);
+    simulationService.setModel(modelId);
+    setState(INITIAL_STATE);
+    setNarrativeHistory([]);
+    setIsInitialized(false);
+    initSimulation();
+  };
+
+  const handleApiKeyChange = (key: string) => {
+    setApiKey(key);
+    simulationService.setApiKey(key);
+  };
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -69,8 +92,8 @@ export default function App() {
       {/* Left Panel: Narrative & Controls */}
       <div className="flex-1 flex flex-col h-screen md:border-r border-slate-200 bg-white">
         {/* Header */}
-        <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-white z-10">
-          <div className="flex items-center gap-3">
+        <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-white z-10 gap-3">
+          <div className="flex items-center gap-3 flex-shrink-0">
             <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-indigo-200">
               <Play className="w-5 h-5 fill-current" />
             </div>
@@ -79,26 +102,34 @@ export default function App() {
               <p className="text-xs text-slate-500">Virtual World Engine</p>
             </div>
           </div>
-          <div className="flex items-center gap-4 text-sm font-medium text-slate-600 bg-slate-50 px-3 py-1.5 rounded-full border border-slate-200">
-            <div className="flex items-center gap-1.5">
-              <Clock className="w-4 h-4 text-indigo-500" />
-              {state.time}
-            </div>
-            <div className="w-px h-3 bg-slate-300" />
-            <div className="flex items-center gap-1.5">
-              <Sun className="w-4 h-4 text-amber-500" />
-              {state.environment.weather}
-            </div>
-            <div className="w-px h-3 bg-slate-300" />
-            <div className="flex items-center gap-1.5">
-              <Thermometer className="w-4 h-4 text-rose-500" />
-              {state.environment.temperature}
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            <ModelSelector
+              selectedModel={selectedModel}
+              onSelect={handleModelChange}
+              apiKey={apiKey}
+              onApiKeyChange={handleApiKeyChange}
+            />
+            <div className="flex items-center gap-3 text-sm font-medium text-slate-600 bg-slate-50 px-3 py-1.5 rounded-full border border-slate-200">
+              <div className="flex items-center gap-1.5">
+                <Clock className="w-4 h-4 text-indigo-500" />
+                {state.time}
+              </div>
+              <div className="w-px h-3 bg-slate-300" />
+              <div className="flex items-center gap-1.5">
+                <Sun className="w-4 h-4 text-amber-500" />
+                {state.environment.weather}
+              </div>
+              <div className="w-px h-3 bg-slate-300" />
+              <div className="flex items-center gap-1.5">
+                <Thermometer className="w-4 h-4 text-rose-500" />
+                {state.environment.temperature}
+              </div>
             </div>
           </div>
         </div>
 
         {/* Narrative Scroll Area */}
-        <div 
+        <div
           ref={scrollRef}
           className="flex-1 overflow-y-auto p-4 space-y-6 scroll-smooth"
         >
@@ -173,7 +204,7 @@ export default function App() {
           <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-1">World State</h2>
           <div className="text-xl font-bold text-slate-900">家庭成員狀態</div>
         </div>
-        
+
         <div className="space-y-6">
           {/* Floor Plan */}
           <FloorPlan characters={state.characters} />
