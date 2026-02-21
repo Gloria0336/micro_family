@@ -1,0 +1,5 @@
+{
+  "name": "MicroSim Family",
+  "description": "A micro virtual world simulation of a 5-person family in a two-story house, powered by Gemini.",
+  "requestFramePermissions": []
+}
