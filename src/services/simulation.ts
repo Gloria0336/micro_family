@@ -77,13 +77,22 @@ ${JSON.stringify(INITIAL_STATE)}`,
     };
   }
 
-  async processAction(input: string): Promise<SimulationResponse> {
+  async processAction(input: string, currentState?: WorldState): Promise<SimulationResponse> {
     if (!this.chat) {
       await this.startSimulation();
     }
 
+    let message = input;
+    if (currentState) {
+      message = `
+【當前世界絕對狀態】：${JSON.stringify(currentState)}
+【使用者輸入/新事件】：${input}
+請根據上述「當前狀態」與「新事件」，推演下一步，並輸出新的 JSON。
+`;
+    }
+
     try {
-      const result = await this.chat.sendMessage({ message: input });
+      const result = await this.chat.sendMessage({ message });
       const text = result.text;
       return this.parseResponse(text);
     } catch (error) {

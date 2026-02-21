@@ -47,7 +47,7 @@ export default function App() {
     setInput(""); // Clear input if it was used
 
     try {
-      const response = await simulationService.processAction(action);
+      const response = await simulationService.processAction(action, state);
       setNarrativeHistory((prev) => [...prev, response.narrative]);
       setState(response.state);
     } catch (error) {
